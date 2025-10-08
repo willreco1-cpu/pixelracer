@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pixel Racer — lightweight HTML5 game</title>
+  <style>
+    :root{--bg:#111;--panel:#0f1720;--accent:#ffd166;--muted:#94a3b8}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;color:#e6eef6;background:var(--bg)}
+    .wrap{max-width:1100px;margin:18px auto;padding:16px;display:grid;grid-template-columns:1fr 360px;gap:16px}
+    .card{background:linear-gradient(180deg,#0b1220, #071021);border:2px solid rgba(255,255,255,0.03);padding:12px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.6)}
+    canvas{width:100%;height:auto;display:block;border-radius:8px;background:#445}
+    h1{margin:4px 0 8px;font-size:18px}
+    .controls{display:flex;gap:8px;margin-top:8px}
+    button{background:var(--accent);border:none;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .upgrades{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+    .upgrade{display:flex;justify-content:space-between;align-items:center;padding:8px;background:rgba(255,255,255,0.02);border-radius:8px}
+    .small{font-size:13px;color:var(--muted)}
+    .stat{font-weight:700}
+    footer{grid-column:1/-1;color:var(--muted);font-size:13px;margin-top:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Pixel Racer — Demo</h1>
+      <canvas id="game" width="960" height="480"></canvas>
+      <div class="controls">
+        <button id="startBtn">Start Race</button>
+        <button id="resetBtn">Reset Progress</button>
+        <div style="flex:1"></div>
+        <div class="small">Coins: <span id="coins">0</span></div>
+      </div>
+      <p class="small">Controls: Click <strong>Start Race</strong> to run an automated drag race. Upgrades modify acceleration, top speed, traction and nitro. This is a compact, embeddable demo intended for Google Sites. You can replace the simple pixel graphics with your own sprites if desired.</p>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center"><strong>Car & Upgrades</strong><span class="small">Level: <span id="carLevel">1</span></span></div>
+      <div class="upgrades" id="upgrades"></div>
+      <div style="margin-top:12px;border-top:1px dashed rgba(255,255,255,0.03);padding-top:10px">
+        <div class="small">Performance
+          <div>Accel: <span id="statAccel" class="stat">1.00</span></div>
+          <div>Top Speed: <span id="statTop" class="stat">120</span></div>
+          <div>Traction: <span id="statGrip" class="stat">1.00</span></div>
+          <div>Nitro: <span id="statNitro" class="stat">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="card">
+      <strong>Embed instructions</strong> — Download this file and host it (GitHub Pages, Netlify, Google Drive static hosting). Then embed in Google Sites with an iframe. Example iframe:
+      <pre style="background:#071021;padding:8px;border-radius:6px;color:#cfe9ff;overflow:auto">&lt;iframe src="https://your-hosted-url.com/pixel-car-like-game.html" width="960" height="600" style="border:none;"&gt;&lt;/iframe&gt;</pre>
+      Tips: use `width="100%"` on Sites and set an explicit height like 600px. If you want me to produce a ready-to-paste GitHub Pages workflow or ZIP, ask and I'll generate it.
+    </footer>
+  </div>
+
+  <script>
+  // --- Simple pixel-style drag-racer demo with upgrades ---
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false; // pixelated look
+
+  // Game state persisted to localStorage
+  const SAVE_KEY = 'pixel_racer_demo_v1';
+  let state = {
+    coins: 120,
+    carLevel: 1,
+    upgrades: {
+      engine: 0,
+      turbo: 0,
+      tires: 0,
+      trans: 0,
+      weight: 0,
+      aero: 0,
+      nitro: 0,
+      ecu: 0
+    }
+  };
+
+  // Upgrade definitions (more than typical)
+  const UPGRADE_DEFS = {
+    engine: {name:'Engine', baseCost:50, descr:'Increases acceleration'},
+    turbo:  {name:'Turbo', baseCost:80, descr:'Adds burst top-speed'},
+    tires:  {name:'Tires', baseCost:30, descr:'Improves traction'},
+    trans:  {name:'Transmission', baseCost:40, descr:'Better gearing for speed'},
+    weight: {name:'Weight reduction', baseCost:60, descr:'Better accel & handling'},
+    aero:   {name:'Aero', baseCost:45, descr:'Improves top speed slightly'},
+    nitro:  {name:'Nitrous', baseCost:100, descr:'Gives short speed boost during race'},
+    ecu:    {name:'ECU tune', baseCost:70, descr:'Optimizes engine for top speed & throttle'}
+  };
+
+  function load() {
+    try{
+      const raw = localStorage.getItem(SAVE_KEY);
+      if(raw) Object.assign(state, JSON.parse(raw));
+    }catch(e){}
+  }
+  function save(){ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }
+
+  // UI build
+  const upgradesDiv = document.getElementById('upgrades');
+  function buildUI(){
+    upgradesDiv.innerHTML = '';
+    for(const k of Object.keys(UPGRADE_DEFS)){
+      const def = UPGRADE_DEFS[k];
+      const level = state.upgrades[k] || 0;
+      const cost = Math.round(def.baseCost * Math.pow(1.8, level));
+      const row = document.createElement('div'); row.className='upgrade';
+      row.innerHTML = `<div>
+        <div style=\"font-weight:700\">${def.name} <span class=\"small\">(lvl ${level})</span></div>
+        <div class=\"small\">${def.descr}</div>
+      </div>
+      <div style=\"text-align:right\"><div class=\"small\">Cost: ${cost}</div>
+      <button data-upg=\"${k}\">Buy</button></div>`;
+      upgradesDiv.appendChild(row);
+      row.querySelector('button').onclick = ()=>{ buyUpgrade(k); };
+    }
+    document.getElementById('coins').textContent = state.coins;
+    document.getElementById('carLevel').textContent = state.carLevel;
+    updateStatsDisplay();
+  }
+
+  function buyUpgrade(key){
+    const def = UPGRADE_DEFS[key];
+    const lvl = state.upgrades[key];
+    const cost = Math.round(def.baseCost * Math.pow(1.8, lvl));
+    if(state.coins < cost) return alert('Not enough coins');
+    state.coins -= cost;
+    state.upgrades[key] = lvl + 1;
+    state.carLevel = Math.floor(Object.values(state.upgrades).reduce((a,b)=>a+b,0)/2)+1;
+    save(); buildUI();
+  }
+
+  // Compute performance from upgrades
+  function computeStats(){
+    const u = state.upgrades;
+    // base stats
+    let accel = 1.0 + u.engine*0.25 + u.weight*0.12 + u.ecu*0.1 + u.trans*0.05;
+    let top = 120 + u.turbo*10 + u.trans*8 + u.aero*6 + u.ecu*5;
+    let grip = 1.0 + u.tires*0.15 + u.weight*0.05;
+    let nitro = u.nitro; // nitro levels give seconds of boost
+    // small diminishing returns
+    accel *= 1 - Math.min(0.15, u.engine*0.01);
+    return {accel:parseFloat(accel.toFixed(2)), top:Math.round(top), grip:parseFloat(grip.toFixed(2)), nitro:nitro};
+  }
+
+  function updateStatsDisplay(){
+    const s = computeStats();
+    document.getElementById('statAccel').textContent = s.accel;
+    document.getElementById('statTop').textContent = s.top;
+    document.getElementById('statGrip').textContent = s.grip;
+    document.getElementById('statNitro').textContent = s.nitro;
+  }
+
+  // Simple automated drag race simulation
+  let running = false;
+  document.getElementById('startBtn').onclick = ()=>{ if(!running) startRace(); };
+  document.getElementById('resetBtn').onclick = ()=>{ if(confirm('Reset progress?')){ localStorage.removeItem(SAVE_KEY); location.reload(); }};
+
+  function startRace(){
+    running = true; document.getElementById('startBtn').disabled = true;
+    const stats = computeStats();
+    const race = {distance: 400, pos:0, speed:0, t:0, finished:false, boostLeft: stats.nitro*2};
+    const dt = 1/60;
+    const resultLog = [];
+
+    function step(){
+      if(race.finished){ running=false; document.getElementById('startBtn').disabled=false; return; }
+      race.t += dt;
+      // acceleration influenced by accel, but less if near top speed
+      const desiredAccel = stats.accel * (1 + Math.random()*0.06 - 0.03);
+      race.speed += desiredAccel * dt * 60; // scale
+      // top speed cap
+      const cap = stats.top + (race.boostLeft>0?60:0) + (state.upgrades.turbo*4);
+      if(race.speed > cap) race.speed = race.speed - (race.speed-cap)*0.2;
+      // friction/traction
+      race.speed *= 0.995 - (0.001*(stats.grip-1));
+      race.pos += race.speed * dt;
+      // auto-use nitro when below 100m and has boost
+      if(race.pos > 150 && race.boostLeft>0){ race.boostLeft -= dt*1; }
+      if(race.pos >= race.distance){ race.finished=true; onFinish(race); }
+      drawRace(race);
+      requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function onFinish(r){
+    const reward = Math.round(50 + Math.random()*80 + state.carLevel*12 + Object.values(state.upgrades).reduce((a,b)=>a+b,0)*6);
+    state.coins += reward; save(); buildUI();
+    // little celebration
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#fff'; ctx.font='28px monospace'; ctx.fillText('Race finished! You earned ' + reward + ' coins',40,240);
+  }
+
+  // --- Rendering ---
+  function drawRace(r){
+    // clear
+    ctx.fillStyle='#202842'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    // track background pixels
+    for(let x=0;x<canvas.width;x+=16){
+      for(let y=0;y<canvas.height;y+=16){
+        if((x+y)%32===0) ctx.fillStyle='#24325a'; else ctx.fillStyle='#27407a';
+        ctx.fillRect(x,y,16,16);
+      }
+    }
+    // draw horizon
+    ctx.fillStyle='#0b1b2b'; ctx.fillRect(0,20,canvas.width,80);
+
+    // draw finish line at distance mapping
+    const finishX = 80 + (canvas.width-160) * (400/400);
+    ctx.fillStyle='#fff'; ctx.fillRect(finishX-4,120,8,240);
+    // draw opponent (simple pixel car)
+    drawPixelCar(300, 300, 0.9, '#c84');
+    // draw player's car position as progress bar
+    const progressX = 40 + (canvas.width-160) * ((r.pos%400)/400);
+    drawPixelCar(progressX, 320, 1.0, '#4af');
+
+    // HUD
+    ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(12,12,220,66);
+    ctx.fillStyle='#cfe9ff'; ctx.font='16px monospace'; ctx.fillText('Speed: ' + Math.round((r.speed||0)) + ' km/h',20,34);
+    ctx.fillText('Distance: ' + Math.max(0,Math.round(400 - (r.pos||0))) + ' m',20,56);
+  }
+
+  function drawPixelCar(x,y,scale,color){
+    const s = 6 * scale;
+    ctx.save(); ctx.translate(x,y); ctx.scale(1,1);
+    // body
+    ctx.fillStyle=color; ctx.fillRect(-20*s,-8*s,40*s,12*s);
+    ctx.fillRect(-14*s,-14*s,28*s,6*s);
+    // wheels
+    ctx.fillStyle='#000'; ctx.fillRect(-16*s,2*s,8*s,6*s); ctx.fillRect(8*s,2*s,8*s,6*s);
+    // windows
+    ctx.fillStyle='#aee'; ctx.fillRect(-8*s,-12*s,16*s,4*s);
+    ctx.restore();
+  }
+
+  // initial setup
+  load(); buildUI(); drawRace({pos:0,speed:0});
+
+  // expose a quick download of save
+  // (not necessary but handy for embedding sites where localStorage persists under that domain)
+  </script>
+</body>
+</html>
